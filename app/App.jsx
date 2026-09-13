@@ -91,7 +91,7 @@ function defaultState() {
       browserNotifications: false,
     },
     chat: [
-      { role: "assistant", text: "Oi. Eu sou seu mentor aqui dentro do sistema. Posso analisar seu progresso, criar hábitos, montar seu plano de estudos, ajustar treinos e reorganizar sua semana — é só me pedir em linguagem natural. Por onde começamos?" }
+      { role: "assistant", text: "Olá. Sou o Organizador do Nexora. Posso organizar seu dia, criar tarefas e hábitos, registrar água e refeições e ajudar você a acompanhar suas prioridades. Por onde começamos?" }
     ],
   };
 }
@@ -101,20 +101,59 @@ function migrateState(raw) {
   if (!raw || typeof raw !== "object") return def;
   const merged = { ...def, ...raw };
   merged.profile = { ...def.profile, ...(raw.profile || {}) };
+
+  // Normaliza coleções para impedir que um dado antigo/corrompido quebre a tela
+  // quando o onboarding termina e o dashboard passa a ser renderizado.
+  const safeArray = (value) => Array.isArray(value) ? value : [];
+
   merged.study = { ...def.study, ...(raw.study || {}) };
+  merged.study.subjects = safeArray(merged.study.subjects);
+  merged.study.sessions = safeArray(merged.study.sessions);
+  merged.study.performance = safeArray(merged.study.performance);
+
   merged.fitness = { ...def.fitness, ...(raw.fitness || {}) };
+  merged.fitness.workouts = safeArray(merged.fitness.workouts);
+  merged.fitness.logs = safeArray(merged.fitness.logs);
+  merged.fitness.schedule = (merged.fitness.schedule && typeof merged.fitness.schedule === "object") ? merged.fitness.schedule : {};
+
   merged.nutrition = {
     targets: { ...def.nutrition.targets, ...(raw.nutrition?.targets || {}) },
-    meals: raw.nutrition?.meals || [],
-    water: raw.nutrition?.water || {},
+    meals: safeArray(raw.nutrition?.meals),
+    water: (raw.nutrition?.water && typeof raw.nutrition.water === "object") ? raw.nutrition.water : {},
   };
   merged.finance = { ...def.finance, ...(raw.finance || {}) };
+  merged.finance.transactions = safeArray(merged.finance.transactions);
+  merged.finance.goals = safeArray(merged.finance.goals);
   merged.settings = {
     reminders: { ...def.settings.reminders, ...(raw.settings?.reminders || {}) },
-    browserNotifications: raw.settings?.browserNotifications || false,
+    browserNotifications: !!raw.settings?.browserNotifications,
   };
-  merged.notifications = raw.notifications || [];
-  merged.goals = (raw.goals || []).map((g) => ({ updatedAt: g.createdAt || todayISO(), ...g }));
+  merged.notifications = safeArray(raw.notifications);
+  merged.chat = safeArray(raw.chat).map((m) => ({ role: m?.role === "user" ? "user" : "assistant", text: String(m?.text || "") })).filter((m) => m.text);
+  if (!merged.chat.length) merged.chat = def.chat;
+
+  merged.goals = safeArray(raw.goals).map((g) => ({
+    ...g,
+    updatedAt: g?.updatedAt || g?.createdAt || todayISO(),
+    milestones: safeArray(g?.milestones),
+  }));
+  merged.habits = safeArray(raw.habits).map((h) => ({
+    ...h,
+    streak: Number.isFinite(+h?.streak) ? +h.streak : 0,
+    bestStreak: Number.isFinite(+h?.bestStreak) ? +h.bestStreak : 0,
+    logs: (h?.logs && typeof h.logs === "object") ? h.logs : {},
+  }));
+  merged.tasks = safeArray(raw.tasks).map((t) => ({
+    ...t,
+    title: String(t?.title || ""),
+    scheduledFor: t?.scheduledFor || todayISO(),
+    duration: Number.isFinite(+t?.duration) ? +t.duration : 30,
+    priority: Number.isFinite(+t?.priority) ? +t.priority : 1,
+    done: !!t?.done,
+  })).filter((t) => t.title);
+  merged.journal = safeArray(raw.journal);
+  merged.xp = Number.isFinite(+raw.xp) ? +raw.xp : 0;
+  merged.onboarded = !!raw.onboarded;
   return merged;
 }
 
@@ -704,7 +743,7 @@ function TodayView({ state, setState, setView, startFocus }) {
     { label: "Iniciar estudo", icon: GraduationCap, view: "study" },
     { label: "Iniciar treino", icon: Dumbbell, view: "fitness" },
     { label: "Escrever diário", icon: BookOpen, view: "journal" },
-    { label: "Falar com IA", icon: Sparkles, view: "mentor" },
+    { label: "Abrir organizador", icon: Sparkles, view: "mentor" },
   ];
 
   return (
@@ -1747,6 +1786,35 @@ const NAV_TITLES = { today: "Hoje", goals: "Metas", habits: "Hábitos", tasks: "
 
 export default function App() {
   const [state, setState, loaded] = useLifeOSState();
+
+  function finishOnboarding(data) {
+    const clean = {
+      ...data,
+      name: String(data?.name || "").trim(),
+      focus: String(data?.focus || "Desenvolvimento pessoal"),
+      vision: String(data?.vision || "Minha melhor versão"),
+      hoursPerDay: String(data?.hoursPerDay || "1–2h"),
+      waterGoal: Number(data?.waterGoal) > 0 ? Number(data.waterGoal) : 2500,
+      workoutDays: Array.isArray(data?.workoutDays) ? data.workoutDays : [],
+    };
+
+    setState((s) => {
+      const base = migrateState(s);
+      const goalTitle = clean.vision.slice(0, 60) || "Minha principal meta";
+      const goal = {
+        id: uid(), title: goalTitle, why: "Definido no onboarding",
+        category: clean.focus, horizon: "Ano", progress: 0,
+        milestones: breakdownMilestones(goalTitle), createdAt: todayISO(), updatedAt: todayISO(),
+      };
+      const habit = { id: uid(), name: "Revisar prioridades do dia", streak: 0, bestStreak: 0, logs: {} };
+      return {
+        ...base, onboarded: true, profile: { ...base.profile, ...clean },
+        nutrition: { ...base.nutrition, targets: { ...base.nutrition.targets, water: clean.waterGoal } },
+        goals: [goal, ...base.goals],
+        habits: [habit, ...base.habits],
+      };
+    });
+  }
   const [view, setView] = useState("today");
   const [focusItem, setFocusItem] = useState(null);
   const [focusKind, setFocusKind] = useState(null);
@@ -1761,11 +1829,7 @@ export default function App() {
   if (!state.onboarded) {
     return (
       <div className="los-root" data-theme={state.theme}><style>{THEME_CSS}</style>
-        <Onboarding onDone={(data) => setState((s) => ({
-          ...s, onboarded: true, profile: { ...s.profile, ...data },
-          goals: [{ id: uid(), title: data.vision.slice(0, 60), why: "Definido no onboarding", category: data.focus, horizon: "Ano", progress: 0, milestones: breakdownMilestones(data.vision.slice(0, 60)), createdAt: todayISO(), updatedAt: todayISO() }],
-          habits: [{ id: uid(), name: "Revisar prioridades do dia", streak: 0, bestStreak: 0, logs: {} }],
-        }))} />
+        <Onboarding onDone={finishOnboarding} />
       </div>
     );
   }
