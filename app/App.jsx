@@ -530,7 +530,7 @@ const NAV = [
   { id: "nutrition", label: "Nutrição", icon: Utensils },
   { id: "finance", label: "Finanças", icon: Wallet },
   { id: "evolution", label: "Evolução", icon: BarChart3 },
-  { id: "mentor", label: "Mentor IA", icon: Sparkles },
+  { id: "mentor", label: "Organizador", icon: Sparkles },
 ];
 
 function Sidebar({ view, setView, xp }) {
@@ -668,7 +668,7 @@ function TodayView({ state, setState, setView, startFocus }) {
 
   const insight = useMemo(() => {
     if (scoreDelta >= 8) return "Você está mais consistente que na semana passada. Continue no ritmo.";
-    if (scoreDelta <= -8) return "Sua consistência caiu em relação à semana passada. Pode valer a pena revisar sua rotina com o Mentor.";
+    if (scoreDelta <= -8) return "Sua consistência caiu em relação à semana passada. Pode valer a pena revisar sua rotina com o Organizador.";
     if (todaysTasks.length && doneCount === 0 && new Date().getHours() >= 14) return "O dia está avançando e nenhuma prioridade foi concluída ainda. Que tal começar pela mais curta?";
     return "Seu ritmo está estável. Foco em manter o que já funciona.";
   }, [scoreDelta, todaysTasks, doneCount]);
@@ -744,7 +744,7 @@ function TodayView({ state, setState, setView, startFocus }) {
       <div>
         <SectionTitle>Foco de hoje</SectionTitle>
         {sorted.length === 0 ? (
-          <div className="los-elev rounded-xl"><EmptyState icon={Target} title="Nenhuma prioridade definida para hoje" sub="Adicione tarefas ou peça ao Mentor IA para montar seu dia." cta="Adicionar tarefa" onCta={() => setView("tasks")} /></div>
+          <div className="los-elev rounded-xl"><EmptyState icon={Target} title="Nenhuma prioridade definida para hoje" sub="Adicione tarefas ou use o Organizador para montar seu dia." cta="Adicionar tarefa" onCta={() => setView("tasks")} /></div>
         ) : (
           <div className="space-y-2">
             {sorted.map((t, i) => (
@@ -1170,7 +1170,7 @@ function StudyView({ state, setState, startFocus }) {
       )}
 
       {state.study.subjects.length === 0 && !addingSubject ? (
-        <div className="los-elev rounded-xl"><EmptyState icon={GraduationCap} title="Nenhuma matéria cadastrada" sub="Diga ao Mentor IA seu objetivo (ex: 'quero passar no ENEM') e ele monta o plano, ou adicione manualmente." cta="Adicionar matéria" onCta={() => setAddingSubject(true)} /></div>
+        <div className="los-elev rounded-xl"><EmptyState icon={GraduationCap} title="Nenhuma matéria cadastrada" sub="Diga ao Organizador seu objetivo (ex: 'quero passar no ENEM') e ele monta o plano, ou adicione manualmente." cta="Adicionar matéria" onCta={() => setAddingSubject(true)} /></div>
       ) : (
         <div className="space-y-2">
           {state.study.subjects.map((subj) => {
@@ -1568,33 +1568,117 @@ function buildContext(state) {
   };
 }
 
-const AI_SYSTEM_PROMPT = `Você é o Mentor IA dentro do ${CONFIG.APP_NAME}, um sistema pessoal de desenvolvimento e execução. Sua personalidade: inteligente, direta, estratégica, honesta e encorajadora — nunca infantil, nunca excessivamente motivacional, nunca humilhante. Você não faz diagnóstico médico nem prescrição nutricional — apenas estimativas e sugestões gerais.
+function localOrganizer(text, state) {
+  const raw = text.trim();
+  const q = raw.toLowerCase();
+  const today = todayISO();
+  const actions = [];
 
-Seu papel: analisar → planejar → acompanhar → corrigir → cobrar → adaptar. Você conhece o contexto do usuário (metas, hábitos, tarefas, estudos, treinos, água, finanças, diário) fornecido abaixo em JSON.
+  const num = (re, fallback=0) => {
+    const m = q.match(re);
+    if (!m) return fallback;
+    return Number(String(m[1]).replace(',', '.')) || fallback;
+  };
 
-Ações disponíveis (execute quando o pedido do usuário implicar criar/alterar dados; NUNCA diga que fez algo sem incluir a action):
-- create_habit { name }
-- create_task { title, duration, category, scheduledFor (YYYY-MM-DD), time (HH:MM opcional) }
-- create_goal { title, why, horizon (Hoje|Semana|Mês|Ano|Longo prazo), category }
-- log_journal { text, mood (0-4) }
-- create_study_subject { name, goal, priority (Baixa|Média|Alta), deadline }
-- log_water { ml }
-- log_meal { name (Café da manhã|Almoço|Lanche|Jantar), items: [string] }
-- create_workout { name, muscle, exercises: [{name, sets, reps, load}] }
-- add_transaction { type (income|expense), amount, category, desc }
-- create_financial_goal { title, target, deadline }
-- complete_task { titleMatch } — marca como concluída a primeira tarefa cujo título contenha titleMatch
-- reschedule_task { titleMatch, scheduledFor, time }
+  // Consultas gerais
+  if (/^(oi|olá|ola|bom dia|boa tarde|boa noite)\b/.test(q)) {
+    return { reply: `Olá! Seu sistema está pronto. Hoje você tem ${state.tasks.filter(t => t.scheduledFor === today && !t.done).length} tarefa(s) pendente(s) e seu Life Score está em ${computeLifeScore(state).total}. Posso organizar seu dia ou registrar algo para você.`, actions };
+  }
 
-Responda SEMPRE em JSON puro, sem markdown, sem crases, no formato exato:
-{"reply": "sua resposta em português, curta e direta (2-5 frases)", "actions": [{"type": "create_habit", "payload": {...}}]}
+  if (/como estou|meu progresso|meu desempenho|resumo|status/.test(q)) {
+    const openTasks = state.tasks.filter(t => !t.done).length;
+    const todayTasks = state.tasks.filter(t => t.scheduledFor === today && !t.done).length;
+    const habitsDone = state.habits.filter(h => h.logs?.[today]).length;
+    const water = state.nutrition.water?.[today] || 0;
+    const score = computeLifeScore(state).total;
+    return { reply: `Seu Life Score está em ${score}. Hoje há ${todayTasks} tarefa(s) pendente(s), ${habitsDone}/${state.habits.length} hábito(s) registrados e ${water} ml de água. No total, você tem ${openTasks} tarefa(s) em aberto.`, actions };
+  }
 
-Se nenhuma ação for necessária, "actions" deve ser um array vazio.`;
+  // Criar hábito
+  let m = q.match(/(?:crie|criar|adicione|adicionar|cadastrar|cadastre)\s+(?:um\s+)?(?:novo\s+)?h[áa]bito\s+(?:chamado\s+|de\s+|:)?(.+)/i);
+  if (m) {
+    const name = raw.slice(raw.toLowerCase().indexOf(m[1].toLowerCase())).trim();
+    actions.push({ type: 'create_habit', payload: { name: name.replace(/[.!?]+$/, '') } });
+    return { reply: `Vou adicionar o hábito “${name.replace(/[.!?]+$/, '')}”.`, actions };
+  }
+
+  // Criar tarefa
+  m = raw.match(/(?:crie|criar|adicione|adicionar|cadastrar|cadastre)\s+(?:uma\s+)?tarefa\s+(?:para\s+|de\s+|:)?(.+)/i);
+  if (m) {
+    let title = m[1].trim().replace(/[.!?]+$/, '');
+    let duration = num(/(\d+)\s*(?:min|minutos)/, 30);
+    let time = (q.match(/(?:às|as|a)\s*(\d{1,2})(?::(\d{2}))?/i) || []);
+    time = time[1] ? `${String(time[1]).padStart(2,'0')}:${time[2] || '00'}` : '';
+    actions.push({ type:'create_task', payload:{ title, duration, category:'Geral', scheduledFor:today, time } });
+    return { reply:`Tarefa criada para hoje: “${title}”${time ? ` às ${time}` : ''}.`, actions };
+  }
+
+  // Criar meta
+  m = raw.match(/(?:crie|criar|adicione|adicionar)\s+(?:uma\s+)?meta\s+(?:de\s+|para\s+|:)?(.+)/i);
+  if (m) {
+    const title = m[1].trim().replace(/[.!?]+$/, '');
+    actions.push({type:'create_goal', payload:{title, why:'Definido pelo usuário', horizon:'Ano', category:'Geral'}});
+    return {reply:`Meta criada: “${title}”.`, actions};
+  }
+
+  // Água
+  if (/água|agua|hidrata/.test(q)) {
+    const ml = num(/(\d+(?:[\.,]\d+)?)\s*(?:ml|mililitros|l|litros)/, 500);
+    const amount = /\d+\s*(?:l|litros)/.test(q) ? Math.round(ml * 1000) : Math.round(ml);
+    actions.push({type:'log_water', payload:{ml: amount}});
+    return {reply:`Registrei ${amount} ml de água para hoje.`, actions};
+  }
+
+  // Refeição
+  m = raw.match(/(?:registre|registrar|adicione|adicionar)\s+(?:a\s+)?(?:refei[çc][aã]o|comida|alimento)\s*:??\s*(.+)/i);
+  if (m) {
+    const items = m[1].split(/,| e /i).map(x=>x.trim()).filter(Boolean);
+    actions.push({type:'log_meal', payload:{name:'Refeição', items}});
+    return {reply:`Registrei a refeição com ${items.length} item(ns).`, actions};
+  }
+
+  // Concluir tarefa
+  m = raw.match(/(?:conclua|concluir|marque|marcar|terminei|terminar)\s+(?:a\s+)?tarefa\s+(.+)/i);
+  if (m) {
+    const titleMatch = m[1].trim().replace(/[.!?]+$/, '');
+    actions.push({type:'complete_task', payload:{titleMatch}});
+    return {reply:`Vou marcar como concluída a tarefa que corresponde a “${titleMatch}”.`, actions};
+  }
+
+  // Reagendar tarefa
+  m = raw.match(/(?:reagende|reagendar|mude|mudar)\s+(?:a\s+)?tarefa\s+(.+?)\s+(?:para|pra)\s+(?:hoje|amanhã|amanha)/i);
+  if (m) {
+    const titleMatch = m[1].trim();
+    const scheduledFor = /amanh/.test(q) ? new Date(Date.now()+86400000).toISOString().slice(0,10) : today;
+    const tm = q.match(/(?:às|as)\s*(\d{1,2})(?::(\d{2}))?/i);
+    const time = tm ? `${String(tm[1]).padStart(2,'0')}:${tm[2]||'00'}` : '';
+    actions.push({type:'reschedule_task', payload:{titleMatch, scheduledFor, time}});
+    return {reply:`Reagendamento preparado para ${scheduledFor === today ? 'hoje' : 'amanhã'}${time ? ` às ${time}` : ''}.`, actions};
+  }
+
+  // Planejamento automático do dia, sem IA
+  if (/planeje meu dia|organize meu dia|planejar meu dia|organizar meu dia|monte meu dia|montar meu dia/.test(q)) {
+    const pending = state.tasks.filter(t => !t.done && t.scheduledFor !== today).sort((a,b)=>(a.priority||99)-(b.priority||99)).slice(0,3);
+    const suggestions = [];
+    pending.forEach((t, i) => actions.push({type:'reschedule_task', payload:{titleMatch:t.title, scheduledFor:today, time:['09:00','14:00','18:00'][i]}}));
+    const unloggedHabit = state.habits.find(h => !h.logs?.[today]);
+    if (unloggedHabit) suggestions.push(`hábito “${unloggedHabit.name}”`);
+    if (state.study.subjects.length) suggestions.push('uma sessão de estudo');
+    const open = state.tasks.filter(t=>!t.done && t.scheduledFor===today).length + pending.length;
+    return {reply:`Organizei uma base para seu dia: ${pending.length} tarefa(s) foram trazidas para hoje. ${suggestions.length ? `Também recomendo priorizar ${suggestions.join(', ')}.` : 'Agora foque nas prioridades e evite lotar sua agenda.'}`, actions};
+  }
+
+  // Ajuda
+  if (/ajuda|o que você faz|comandos|como usar/.test(q)) {
+    return {reply:'Posso organizar seu dia e alterar seus dados sem nenhuma API. Tente: “crie uma tarefa estudar matemática”, “adicione o hábito ler 20 minutos”, “registre 500 ml de água”, “conclua a tarefa estudar” ou “planeje meu dia”.', actions};
+  }
+
+  return {reply:'Não encontrei uma ação automática para esse pedido. Use os botões e módulos do Nexora ou diga algo como “crie uma tarefa”, “adicione um hábito”, “registre 500 ml de água” ou “planeje meu dia”.', actions};
+}
 
 function MentorView({ state, setState }) {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
   const scrollRef = useRef(null);
 
   useEffect(() => { scrollRef.current?.scrollIntoView({ behavior: "smooth" }); }, [state.chat, loading]);
@@ -1610,7 +1694,7 @@ function MentorView({ state, setState }) {
         if (a.type === "create_goal" && p.title) next.goals = [{ id: uid(), title: p.title, why: p.why || "", category: p.category || "Geral", horizon: p.horizon || "Ano", progress: 0, milestones: breakdownMilestones(p.title), createdAt: todayISO(), updatedAt: todayISO() }, ...next.goals];
         if (a.type === "log_journal" && p.text) next.journal = [{ id: uid(), date: todayISO(), mood: p.mood ?? 3, text: p.text }, ...next.journal];
         if (a.type === "create_study_subject" && p.name) next.study.subjects = [{ id: uid(), name: p.name, goal: p.goal || "", priority: p.priority || "Média", deadline: p.deadline || "" }, ...next.study.subjects];
-        if (a.type === "log_water" && p.ml) { const today = todayISO(); next.nutrition.water = { ...next.nutrition.water, [today]: (next.nutrition.water[today] || 0) + p.ml }; }
+        if (a.type === "log_water" && p.ml) { const d = todayISO(); next.nutrition.water = { ...next.nutrition.water, [d]: (next.nutrition.water[d] || 0) + p.ml }; }
         if (a.type === "log_meal" && p.items) next.nutrition.meals = [{ id: uid(), date: todayISO(), name: p.name || "Refeição", items: p.items, kcal: estimateKcal(p.items) }, ...next.nutrition.meals];
         if (a.type === "create_workout" && p.name) next.fitness.workouts = [{ id: uid(), name: p.name, muscle: p.muscle || "", exercises: p.exercises || [] }, ...next.fitness.workouts];
         if (a.type === "add_transaction" && p.amount) next.finance.transactions = [{ id: uid(), type: p.type || "expense", amount: +p.amount, category: p.category || "Outros", desc: p.desc || "", date: todayISO() }, ...next.finance.transactions];
@@ -1625,31 +1709,15 @@ function MentorView({ state, setState }) {
   async function send() {
     const text = input.trim();
     if (!text || loading) return;
-    setInput(""); setError("");
-    const userMsg = { role: "user", text };
-    setState((s) => ({ ...s, chat: [...s.chat, userMsg] }));
+    setInput("");
+    setState((s) => ({ ...s, chat: [...s.chat, { role: "user", text }] }));
     setLoading(true);
     try {
-      const context = buildContext(state);
-      const history = [...state.chat, userMsg].slice(-10).map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.text }));
-      const response = await fetch("/api/mentor", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ system: AI_SYSTEM_PROMPT, context, messages: history }),
-      });
-      const data = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        throw new Error(data?.error || `Erro HTTP ${response.status}`);
-      }
-      const raw = (data.content || []).map((c) => c.text || "").join("").trim();
-      const clean = raw.replace(/^```json/i, "").replace(/```$/, "").trim();
-      let parsed;
-      try { parsed = JSON.parse(clean); } catch { parsed = { reply: raw || "Não consegui processar isso agora.", actions: [] }; }
-      setState((s) => ({ ...s, chat: [...s.chat, { role: "assistant", text: parsed.reply }] }));
-      applyActions(parsed.actions);
-    } catch (e) {
-      console.error("Nexora Mentor error:", e);
-      setError(e?.message || "Não consegui conectar ao mentor agora. Tente novamente em instantes.");
+      // Motor local: sem API, sem chave, sem servidor e sem custo por mensagem.
+      const result = localOrganizer(text, state);
+      await new Promise(r => setTimeout(r, 250));
+      setState((s) => ({ ...s, chat: [...s.chat, { role: "assistant", text: result.reply }] }));
+      applyActions(result.actions);
     } finally {
       setLoading(false);
     }
@@ -1657,91 +1725,25 @@ function MentorView({ state, setState }) {
 
   return (
     <div className="max-w-2xl mx-auto px-6 py-8 flex flex-col h-[calc(100vh-2rem)]">
-      <div className="mb-4"><h1 className="text-xl font-semibold los-text flex items-center gap-2"><Sparkles size={18} className="los-accent" /> Mentor IA</h1><p className="los-dim text-sm mt-0.5">Analisa seu progresso e pode agir por você — é só pedir.</p></div>
+      <div className="mb-4"><h1 className="text-xl font-semibold los-text flex items-center gap-2"><Sparkles size={18} className="los-accent" /> Organizador</h1><p className="los-dim text-sm mt-0.5">Organiza sua rotina e executa ações localmente — sem API e sem custo por mensagem.</p></div>
       <div className="flex-1 overflow-y-auto los-scroll space-y-3 pb-4">
         {state.chat.map((m, i) => (
           <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`}>
             <div className={`max-w-[85%] rounded-xl px-4 py-2.5 text-sm leading-relaxed ${m.role === "user" ? "los-accent-bg" : "los-elev los-text"}`}>{m.text}</div>
           </div>
         ))}
-        {loading && <div className="flex justify-start"><div className="los-elev rounded-xl px-4 py-2.5 flex items-center gap-2 los-dim text-sm"><Loader2 size={13} className="animate-spin" /> pensando...</div></div>}
-        {error && <p className="text-xs text-red-400">{error}</p>}
+        {loading && <div className="flex justify-start"><div className="los-elev rounded-xl px-4 py-2.5 flex items-center gap-2 los-dim text-sm"><Loader2 size={13} className="animate-spin" /> organizando...</div></div>}
         <div ref={scrollRef} />
       </div>
-      <div className="flex gap-2 pt-2 border-t los-border">
-        <input className="los-input flex-1 rounded-lg px-3 py-2.5 text-sm" placeholder="Ex: quero passar no ENEM, monte meu plano de estudos" value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} />
-        <button onClick={send} disabled={loading || !input.trim()} className="los-accent-bg rounded-lg w-10 h-10 flex items-center justify-center disabled:opacity-30 hover:opacity-90 los-transition shrink-0"><Send size={15} /></button>
+      <div className="flex gap-2">
+        <input value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')send();}} placeholder="Ex: crie uma tarefa estudar Matemática" className="flex-1 los-input rounded-xl px-3 py-2.5 text-sm outline-none" />
+        <button onClick={send} disabled={loading} className="los-accent-bg rounded-xl px-3 disabled:opacity-50"><Send size={16}/></button>
       </div>
     </div>
   );
 }
 
-/* ============================================================
-   CONFIGURAÇÕES
-   ============================================================ */
-function SettingsView({ state, setState }) {
-  const r = state.settings.reminders;
-  function toggleReminder(key) { setState((s) => ({ ...s, settings: { ...s.settings, reminders: { ...s.settings.reminders, [key]: !s.settings.reminders[key] } } })); }
-  async function enableBrowserNotif() {
-    try {
-      const perm = await Notification.requestPermission();
-      setState((s) => ({ ...s, settings: { ...s.settings, browserNotifications: perm === "granted" } }));
-    } catch { setState((s) => ({ ...s, settings: { ...s.settings, browserNotifications: false } })); }
-  }
-  const reminderLabels = { study: "Estudos", water: "Água", workout: "Treino", habits: "Hábitos", tasks: "Tarefas", goals: "Metas", reviews: "Revisões", aiProactive: "IA proativa" };
-
-  return (
-    <div className="max-w-lg mx-auto px-6 py-8 space-y-6">
-      <h1 className="text-xl font-semibold los-text">Configurações</h1>
-
-      <div className="los-elev rounded-xl p-4 space-y-3">
-        <p className="text-sm font-medium los-text">Perfil</p>
-        <input className="los-input w-full rounded-lg px-3 py-2 text-sm" value={state.profile.name} onChange={(e) => setState((s) => ({ ...s, profile: { ...s.profile, name: e.target.value } }))} />
-        <div className="flex gap-2">
-          <div className="flex-1"><label className="text-xs los-dim block mb-1">Horário de estudo</label><input type="time" className="los-input w-full rounded-lg px-3 py-2 text-sm" value={state.profile.studyTime} onChange={(e) => setState((s) => ({ ...s, profile: { ...s.profile, studyTime: e.target.value } }))} /></div>
-          <div className="flex-1"><label className="text-xs los-dim block mb-1">Horário de treino</label><input type="time" className="los-input w-full rounded-lg px-3 py-2 text-sm" value={state.profile.workoutTime} onChange={(e) => setState((s) => ({ ...s, profile: { ...s.profile, workoutTime: e.target.value } }))} /></div>
-        </div>
-        <div><label className="text-xs los-dim block mb-1">Meta de água (ml)</label><input type="number" step={250} className="los-input w-full rounded-lg px-3 py-2 text-sm" value={state.profile.waterGoal} onChange={(e) => setState((s) => ({ ...s, profile: { ...s.profile, waterGoal: +e.target.value } }))} /></div>
-      </div>
-
-      <div className="los-elev rounded-xl p-4 space-y-3">
-        <p className="text-sm font-medium los-text">Aparência</p>
-        <div className="flex gap-2">
-          {[{ id: "light", icon: Sun, label: "Claro" }, { id: "dark", icon: Moon, label: "Escuro" }].map((t) => (
-            <button key={t.id} onClick={() => setState((s) => ({ ...s, theme: t.id }))} className={`flex-1 flex flex-col items-center gap-1.5 py-3 rounded-lg los-transition ${state.theme === t.id ? "los-nav-active" : "los-elev-2 los-dim"}`}><t.icon size={16} /><span className="text-xs">{t.label}</span></button>
-          ))}
-        </div>
-      </div>
-
-      <div className="los-elev rounded-xl p-4 space-y-3">
-        <p className="text-sm font-medium los-text">Notificações</p>
-        <div className="grid grid-cols-2 gap-2">
-          {Object.keys(reminderLabels).map((key) => (
-            <button key={key} onClick={() => toggleReminder(key)} className={`flex items-center justify-between px-3 py-2 rounded-lg text-xs los-transition ${r[key] ? "los-nav-active los-text" : "los-elev-2 los-dim"}`}>
-              {reminderLabels[key]}
-              <div className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${r[key] ? "los-accent-bg border-transparent" : "los-border"}`}>{r[key] && <Check size={9} strokeWidth={4} />}</div>
-            </button>
-          ))}
-        </div>
-        <div className="pt-2 border-t los-border">
-          <button onClick={enableBrowserNotif} className="text-xs los-accent flex items-center gap-1.5"><Bell size={12} /> {state.settings.browserNotifications ? "Notificações do navegador ativas" : "Ativar notificações do navegador"}</button>
-        </div>
-      </div>
-
-      <div className="los-elev rounded-xl p-4">
-        <p className="text-sm font-medium los-text mb-1">Sobre os dados</p>
-        <p className="text-xs los-dim leading-relaxed">Seus dados ficam salvos localmente neste dispositivo. O Mentor IA usa uma rota segura no servidor para falar com a Anthropic; a chave da API nunca é enviada ao navegador. O Nexora é instalável como PWA e está preparado para notificações do sistema.</p>
-      </div>
-
-      <button onClick={() => { if (confirm("Isso vai apagar todos os seus dados neste app. Continuar?")) setState({ ...defaultState() }); }} className="flex items-center gap-1.5 text-xs los-faint hover:text-red-400 los-transition"><RotateCcw size={12} /> Reiniciar dados</button>
-    </div>
-  );
-}
-
-/* ============================================================
-   APP
-   ============================================================ */
-const NAV_TITLES = { today: "Hoje", goals: "Metas", habits: "Hábitos", tasks: "Tarefas", journal: "Diário", study: "Estudos", fitness: "Fitness", nutrition: "Nutrição", finance: "Finanças", evolution: "Evolução", mentor: "Mentor IA", settings: "Configurações" };
+const NAV_TITLES = { today: "Hoje", goals: "Metas", habits: "Hábitos", tasks: "Tarefas", journal: "Diário", study: "Estudos", fitness: "Fitness", nutrition: "Nutrição", finance: "Finanças", evolution: "Evolução", mentor: "Organizador", settings: "Configurações" };
 
 export default function App() {
   const [state, setState, loaded] = useLifeOSState();
