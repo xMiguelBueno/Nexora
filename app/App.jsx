@@ -1637,7 +1637,10 @@ function MentorView({ state, setState }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ system: AI_SYSTEM_PROMPT, context, messages: history }),
       });
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data?.error || `Erro HTTP ${response.status}`);
+      }
       const raw = (data.content || []).map((c) => c.text || "").join("").trim();
       const clean = raw.replace(/^```json/i, "").replace(/```$/, "").trim();
       let parsed;
@@ -1645,7 +1648,8 @@ function MentorView({ state, setState }) {
       setState((s) => ({ ...s, chat: [...s.chat, { role: "assistant", text: parsed.reply }] }));
       applyActions(parsed.actions);
     } catch (e) {
-      setError("Não consegui conectar ao mentor agora. Tente novamente em instantes.");
+      console.error("Nexora Mentor error:", e);
+      setError(e?.message || "Não consegui conectar ao mentor agora. Tente novamente em instantes.");
     } finally {
       setLoading(false);
     }

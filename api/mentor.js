@@ -27,6 +27,7 @@ export default async function handler(req, res) {
     if (!upstream.ok) return res.status(upstream.status).json({ error: data?.error?.message || 'Erro na Anthropic.' });
     return res.status(200).json(data);
   } catch (error) {
+    console.error('Nexora Mentor API error:', error);
     return res.status(500).json({ error: 'Erro interno ao conectar com o Mentor IA.' });
   }
 }
